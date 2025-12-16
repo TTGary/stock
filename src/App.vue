@@ -441,7 +441,7 @@ export default {
         return null
       }
       
-      // 使用东方财富API（支持CORS）- 添加f84总股本,f85流通股本,f127行业
+      // 使用东方财富API（原生支持CORS，不需要代理）
       const secid = `${marketPrefix === 'sh' ? '1' : '0'}.${code}`
       const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f43,f44,f45,f46,f47,f48,f50,f51,f52,f57,f58,f60,f84,f85,f116,f117,f127,f162,f163,f164,f167,f168,f169,f170&_=${Date.now()}`
       
@@ -653,26 +653,18 @@ export default {
         throw new Error('A股代码格式不正确，沪市以6开头，深市以0或3开头')
       }
 
-      const fullCode = `${marketPrefix}${code}`
+      // 使用东方财富API（原生支持CORS，不需要代理）
+      const secid = `${marketPrefix === 'sh' ? '1' : '0'}.${code}`
+      const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f43,f44,f45,f46,f47,f48,f50,f51,f52,f57,f58,f60,f84,f85,f116,f117,f127,f162,f163,f164,f167,f168,f169,f170&_=${Date.now()}`
       
-      const fetchRealTimeData = async () => {
-        // 使用东方财富API（支持CORS）- 添加f84总股本,f85流通股本,f127行业
-        const secid = `${marketPrefix === 'sh' ? '1' : '0'}.${code}`
-        const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f43,f44,f45,f46,f47,f48,f50,f51,f52,f57,f58,f60,f84,f85,f116,f117,f127,f162,f163,f164,f167,f168,f169,f170&_=${Date.now()}`
-        
-        try {
-          const response = await axios.get(url, { timeout: 10000 })
-          if (response.data && response.data.data) {
-            return response.data
-          }
-        } catch {}
-        
-        throw new Error('股票代码不存在或数据获取失败')
-      }
-
-      const realTimeData = await fetchRealTimeData()
+      try {
+        const response = await axios.get(url, { timeout: 10000 })
+        if (response.data && response.data.data) {
+          return this.parseEastmoneyData(response.data, code)
+        }
+      } catch {}
       
-      return this.parseEastmoneyData(realTimeData, code)
+      throw new Error('股票代码不存在或数据获取失败')
     },
 
     async fetchAShareIndustry(code) {
@@ -733,29 +725,28 @@ export default {
       const d = response.data
       if (!d) throw new Error('数据为空')
       
-      // 东方财富API返回的价格已经是实际值（不需要除100）
-      const currentPrice = d.f43 || 0
-      const prevClose = d.f60 || 0
-      const openPrice = d.f46 || 0
-      const highPrice = d.f44 || 0
-      const lowPrice = d.f45 || 0
-      // f47是成交量（股），需要除以100转换为手
-      const volumeShares = d.f47 || 0
-      const volumeHands = volumeShares / 100
+      // 东方财富API价格数据放大100倍，需要除以100
+      const currentPrice = (d.f43 || 0) / 100
+      const prevClose = (d.f60 || 0) / 100
+      const openPrice = (d.f46 || 0) / 100
+      const highPrice = (d.f44 || 0) / 100
+      const lowPrice = (d.f45 || 0) / 100
+      const change = (d.f169 || 0) / 100
+      const changePercent = (d.f170 || 0) / 100
+      // f47是成交量（手），不需要转换
+      const volumeHands = d.f47 || 0
       const amount = d.f48 || 0
-      const change = d.f169 || 0
-      const changePercent = d.f170 || 0
-      const turnoverRate = d.f168 || 0
+      const turnoverRate = (d.f168 || 0) / 100
       const amplitude = prevClose > 0 ? (((highPrice - lowPrice) / prevClose) * 100).toFixed(2) : '0.00'
       const totalMarketValue = d.f116 || 0
       const tradableMarketValue = d.f117 || 0
       const totalShares = d.f84 || 0
       const tradableShares = d.f85 || 0
       const industry = d.f127 || ''
-      const dynamicPE = d.f162 || 0
-      const staticPE = d.f163 || 0
-      const peTTM = d.f164 || 0
-      const PB = d.f167 || 0
+      const dynamicPE = (d.f162 || 0) / 100
+      const staticPE = (d.f163 || 0) / 100
+      const peTTM = (d.f164 || 0) / 100
+      const PB = (d.f167 || 0) / 100
       
       return [{
         '股票代码': code,
