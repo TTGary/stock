@@ -456,33 +456,37 @@ export default {
     },
     
     async fetchUSStockDataByCode(code) {
-      // 直接使用allorigins代理，避免本地代理403问题
-      try {
-        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${code.toUpperCase()}?interval=1d&range=3mo`)}`
-        const response = await axios.get(proxyUrl, { timeout: 15000 })
-        if (response.data?.chart?.result?.[0]) {
-          return this.parseUSStockData(response.data, code)
-        }
-        return null
-      } catch {
-        return null
+      const symbol = code.toUpperCase()
+      const markets = ['105', '106']
+      const fields = 'f43,f44,f45,f46,f47,f48,f57,f58,f60,f100,f116,f117,f167,f168,f169,f170,f173,f183'
+      
+      for (const market of markets) {
+        const secid = `${market}.${symbol}`
+        const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=${fields}&_=${Date.now()}`
+        
+        try {
+          const response = await axios.get(url, { timeout: 10000 })
+          if (response.data?.data?.f43) {
+            return this.parseEastmoneyUSHKData(response.data, symbol, '美股')
+          }
+        } catch {}
       }
+      return null
     },
     
     async fetchHKStockDataByCode(code) {
-      const hkCode = code.replace(/^0+/, '').padStart(4, '0')
-      const symbol = `${hkCode}.HK`
-      // 直接使用allorigins代理，避免本地代理403问题
+      const hkCode = code.replace(/^0+/, '').padStart(5, '0')
+      const secid = `116.${hkCode}`
+      const fields = 'f43,f44,f45,f46,f47,f48,f57,f58,f60,f100,f116,f117,f167,f168,f169,f170,f173,f183'
+      const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=${fields}&_=${Date.now()}`
+      
       try {
-        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=3mo`)}`
-        const response = await axios.get(proxyUrl, { timeout: 15000 })
-        if (response.data?.chart?.result?.[0]) {
-          return this.parseHKStockData(response.data, code)
+        const response = await axios.get(url, { timeout: 10000 })
+        if (response.data?.data?.f43) {
+          return this.parseEastmoneyUSHKData(response.data, hkCode, '港股')
         }
-        return null
-      } catch {
-        return null
-      }
+      } catch {}
+      return null
     },
     clearStockCode() {
       this.stockCode = ''
@@ -914,104 +918,94 @@ export default {
 
     async fetchUSStockData() {
       const symbol = this.stockCode.trim().toUpperCase()
-      const directUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=3mo`
-      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(directUrl)}`
-      const proxyResponse = await axios.get(proxyUrl, { timeout: 15000 })
-      const data = JSON.parse(proxyResponse.data.contents)
+      // 使用东方财富API获取美股数据，secid格式：105.股票代码（纳斯达克）或106.股票代码（纽交所）
+      const markets = ['105', '106']
+      const fields = 'f43,f44,f45,f46,f47,f48,f57,f58,f60,f100,f116,f117,f167,f168,f169,f170,f173,f183'
       
-      if (!data.chart || !data.chart.result || data.chart.result.length === 0) {
-        throw new Error('未找到股票数据')
+      for (const market of markets) {
+        const secid = `${market}.${symbol}`
+        const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=${fields}&_=${Date.now()}`
+        
+        try {
+          const response = await axios.get(url, { timeout: 10000 })
+          if (response.data?.data?.f43) {
+            return this.parseEastmoneyUSHKData(response.data, symbol, '美股')
+          }
+        } catch {}
       }
-
-      return this.parseUSStockData(data, symbol)
+      
+      throw new Error('未找到股票数据，请检查股票代码')
     },
 
-    // 通用的Yahoo Finance数据解析方法（美股/港股共用）
-    parseYahooStockData(data, code) {
-      const result = data.chart.result[0]
-      const meta = result.meta
-      const quotes = result.indicators.quote[0]
-      const timestamps = result.timestamp || []
-
-      const currentPrice = meta.regularMarketPrice || 0
+    // 解析东方财富美股/港股数据
+    parseEastmoneyUSHKData(response, code, market) {
+      const d = response.data
+      if (!d) throw new Error('数据为空')
       
-      let prevClose = meta.previousClose || meta.chartPreviousClose || 0
-      if (!prevClose && timestamps.length > 0 && quotes.close && quotes.close.length > 0) {
-        for (let i = quotes.close.length - 1; i >= 0; i--) {
-          if (quotes.close[i] && quotes.close[i] > 0) {
-            prevClose = quotes.close[i]
-            break
-          }
-        }
-      }
-      
-      let openPrice = meta.regularMarketOpen || 0
-      if (!openPrice && quotes.open && quotes.open.length > 0) {
-        for (let i = quotes.open.length - 1; i >= 0; i--) {
-          if (quotes.open[i] && quotes.open[i] > 0) {
-            openPrice = quotes.open[i]
-            break
-          }
-        }
-      }
-      
-      const highPrice = meta.regularMarketDayHigh || 0
-      const lowPrice = meta.regularMarketDayLow || 0
-      const volume = meta.regularMarketVolume || 0
-      const amount = volume * currentPrice
-      
-      const change = currentPrice - prevClose
-      const changePercent = prevClose > 0 ? ((change / prevClose) * 100).toFixed(2) : '0.00'
+      // 东方财富API美股/港股价格数据放大1000倍
+      const currentPrice = (d.f43 || 0) / 1000
+      const prevClose = (d.f60 || 0) / 1000
+      const openPrice = (d.f46 || 0) / 1000
+      const highPrice = (d.f44 || 0) / 1000
+      const lowPrice = (d.f45 || 0) / 1000
+      const change = (d.f169 || 0) / 1000
+      const changePercent = (d.f170 || 0) / 100
+      const volume = d.f47 || 0
+      const amount = d.f48 || 0
       const amplitude = prevClose > 0 ? (((highPrice - lowPrice) / prevClose) * 100).toFixed(2) : '0.00'
       
-      const marketTime = meta.regularMarketTime ? new Date(meta.regularMarketTime * 1000) : new Date()
-      const date = marketTime.toLocaleDateString()
-      const time = marketTime.toLocaleTimeString()
+      // 额外字段
+      const totalMarketValue = d.f116 || 0
+      const tradableMarketValue = d.f117 || 0
+      const PB = (d.f167 || 0) / 100
+      const ROE = (d.f173 || 0) / 100
+      const totalRevenue = d.f183 || 0
       
       return [{
         '股票代码': code,
-        '股票名称': meta.longName || meta.shortName || code,
-        '日期': date,
-        '当前价格': currentPrice > 0 ? currentPrice.toFixed(2) : '',
-        '昨收': prevClose > 0 ? prevClose.toFixed(2) : '',
-        '涨跌额': change !== 0 ? change.toFixed(2) : '',
-        '涨跌幅': changePercent + '%',
-        '今日开盘价': openPrice > 0 ? openPrice.toFixed(2) : '',
-        '今日最高价': highPrice > 0 ? highPrice.toFixed(2) : '',
-        '今日最低价': lowPrice > 0 ? lowPrice.toFixed(2) : '',
+        '股票名称': d.f58 || code,
+        '日期': new Date().toLocaleDateString(),
+        '当前价格': currentPrice ? currentPrice.toFixed(2) : '',
+        '昨收': prevClose ? prevClose.toFixed(2) : '',
+        '涨跌额': change ? change.toFixed(2) : '',
+        '涨跌幅': changePercent ? changePercent.toFixed(2) + '%' : '',
+        '今日开盘价': openPrice ? openPrice.toFixed(2) : '',
+        '今日最高价': highPrice ? highPrice.toFixed(2) : '',
+        '今日最低价': lowPrice ? lowPrice.toFixed(2) : '',
         '振幅': amplitude + '%',
         '成交量': volume > 0 ? this.formatNumber(volume, true) : '',
         '成交额': amount > 0 ? this.formatNumber(amount) : '',
-        '时间': time,
+        '总市值': totalMarketValue > 0 ? this.formatNumber(totalMarketValue) : '',
+        '流通市值': tradableMarketValue > 0 ? this.formatNumber(tradableMarketValue) : '',
+        '市净率': PB > 0 ? PB.toFixed(2) : '',
+        'ROE': ROE !== 0 ? ROE.toFixed(2) + '%' : '',
+        '总营收': totalRevenue > 0 ? this.formatNumber(totalRevenue) : '',
+        '时间': new Date().toLocaleTimeString('zh-CN', { hour12: false }),
         '_change': change,
-        '_changePercent': parseFloat(changePercent),
+        '_changePercent': changePercent,
         '_prevClose': prevClose,
         '_close': currentPrice
       }]
     },
 
-    parseUSStockData(data, symbol) {
-      return this.parseYahooStockData(data, symbol)
-    },
-
     async fetchHKStockData() {
-      const code = this.stockCode.trim().padStart(5, '0')
-      const symbol = `${code}.HK`
-      const directUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=3mo`
-      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(directUrl)}`
-      const proxyResponse = await axios.get(proxyUrl, { timeout: 15000 })
-      const data = JSON.parse(proxyResponse.data.contents)
+      const code = this.stockCode.trim().replace(/^0+/, '').padStart(5, '0')
+      // 使用东方财富API获取港股数据，secid格式：116.股票代码
+      const secid = `116.${code}`
+      const fields = 'f43,f44,f45,f46,f47,f48,f57,f58,f60,f100,f116,f117,f167,f168,f169,f170,f173,f183'
+      const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=${fields}&_=${Date.now()}`
       
-      if (!data.chart || !data.chart.result || data.chart.result.length === 0) {
-        throw new Error('未找到股票数据')
-      }
-
-      return this.parseHKStockData(data, code)
+      try {
+        const response = await axios.get(url, { timeout: 10000 })
+        if (response.data?.data?.f43) {
+          return this.parseEastmoneyUSHKData(response.data, code, '港股')
+        }
+      } catch {}
+      
+      throw new Error('未找到股票数据，请检查股票代码')
     },
 
-    parseHKStockData(data, code) {
-      return this.parseYahooStockData(data, code)
-    },
+
 
     formatNumber(num, isVolume = false) {
       if (num === 0 || num === null || num === undefined) return ''
