@@ -447,20 +447,23 @@ export default {
       const sinaUrl = `https://hq.sinajs.cn/list=${fullCode}`
       const proxies = [
         `https://api.allorigins.win/raw?url=${encodeURIComponent(sinaUrl)}`,
-        `https://corsproxy.io/?${encodeURIComponent(sinaUrl)}`
+        `https://corsproxy.io/?${encodeURIComponent(sinaUrl)}`,
+        `https://proxy.cors.sh/${sinaUrl}`
       ]
       
       for (const proxyUrl of proxies) {
         try {
-          const response = await axios.get(proxyUrl, { responseType: 'text', timeout: 10000 })
-          if (response.data && !response.data.includes('FAILED')) {
+          const response = await axios.get(proxyUrl, { 
+            responseType: 'text', 
+            timeout: 8000,
+            headers: proxyUrl.includes('cors.sh') ? { 'x-cors-api-key': 'temp_' + Date.now() } : {}
+          })
+          if (response.data && !response.data.includes('FAILED') && response.data.includes('var hq_str')) {
             realTimeData = response.data
             break
           }
         } catch {}
       }
-      
-      if (!realTimeData) return null
       
       if (!realTimeData) return null
       
@@ -675,13 +678,19 @@ export default {
         // 尝试多个CORS代理
         const proxies = [
           `https://api.allorigins.win/raw?url=${encodeURIComponent(sinaUrl)}`,
-          `https://corsproxy.io/?${encodeURIComponent(sinaUrl)}`
+          `https://corsproxy.io/?${encodeURIComponent(sinaUrl)}`,
+          `https://proxy.cors.sh/${sinaUrl}`,
+          `https://cors-anywhere.herokuapp.com/${sinaUrl}`
         ]
         
         for (const proxyUrl of proxies) {
           try {
-            const response = await axios.get(proxyUrl, { responseType: 'text', timeout: 10000 })
-            if (response.data && !response.data.includes('FAILED') && !response.data.includes('不存在')) {
+            const response = await axios.get(proxyUrl, { 
+              responseType: 'text', 
+              timeout: 8000,
+              headers: proxyUrl.includes('cors.sh') ? { 'x-cors-api-key': 'temp_' + Date.now() } : {}
+            })
+            if (response.data && !response.data.includes('FAILED') && !response.data.includes('不存在') && response.data.includes('var hq_str')) {
               return response.data
             }
           } catch {}
