@@ -440,37 +440,19 @@ export default {
       } else {
         return null
       }
-      const fullCode = `${marketPrefix}${code}`
       
-      // 获取实时数据（使用CORS代理，支持多个备选）
-      let realTimeData = null
-      const sinaUrl = `https://hq.sinajs.cn/list=${fullCode}`
-      const proxies = [
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(sinaUrl)}`,
-        `https://corsproxy.io/?${encodeURIComponent(sinaUrl)}`,
-        `https://proxy.cors.sh/${sinaUrl}`
-      ]
+      // 使用东方财富API（支持CORS）
+      const secid = `${marketPrefix === 'sh' ? '1' : '0'}.${code}`
+      const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f43,f44,f45,f46,f47,f48,f50,f51,f52,f57,f58,f60,f116,f117,f162,f163,f164,f167,f168,f169,f170&_=${Date.now()}`
       
-      for (const proxyUrl of proxies) {
-        try {
-          const response = await axios.get(proxyUrl, { 
-            responseType: 'text', 
-            timeout: 8000,
-            headers: proxyUrl.includes('cors.sh') ? { 'x-cors-api-key': 'temp_' + Date.now() } : {}
-          })
-          if (response.data && !response.data.includes('FAILED') && response.data.includes('var hq_str')) {
-            realTimeData = response.data
-            break
-          }
-        } catch {}
-      }
+      try {
+        const response = await axios.get(url, { timeout: 10000 })
+        if (response.data && response.data.data) {
+          return this.parseEastmoneyData(response.data, code)
+        }
+      } catch {}
       
-      if (!realTimeData) return null
-      
-      // 刷新时只获取东方财富详细数据，不调用第三方API（避免频率限制）
-      const detailData = await this.fetchAShareDetail(code, marketPrefix).catch(() => null)
-      
-      return this.parseAShareData(realTimeData, code, detailData, '', null)
+      return null
     },
     
     async fetchUSStockDataByCode(code) {
@@ -674,48 +656,23 @@ export default {
       const fullCode = `${marketPrefix}${code}`
       
       const fetchRealTimeData = async () => {
-        const sinaUrl = `https://hq.sinajs.cn/list=${fullCode}`
-        // 尝试多个CORS代理
-        const proxies = [
-          `https://api.allorigins.win/raw?url=${encodeURIComponent(sinaUrl)}`,
-          `https://corsproxy.io/?${encodeURIComponent(sinaUrl)}`,
-          `https://proxy.cors.sh/${sinaUrl}`,
-          `https://cors-anywhere.herokuapp.com/${sinaUrl}`
-        ]
+        // 使用东方财富API（支持CORS）
+        const secid = `${marketPrefix === 'sh' ? '1' : '0'}.${code}`
+        const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f43,f44,f45,f46,f47,f48,f50,f51,f52,f57,f58,f60,f116,f117,f162,f163,f164,f167,f168,f169,f170&_=${Date.now()}`
         
-        for (const proxyUrl of proxies) {
-          try {
-            const response = await axios.get(proxyUrl, { 
-              responseType: 'text', 
-              timeout: 8000,
-              headers: proxyUrl.includes('cors.sh') ? { 'x-cors-api-key': 'temp_' + Date.now() } : {}
-            })
-            if (response.data && !response.data.includes('FAILED') && !response.data.includes('不存在') && response.data.includes('var hq_str')) {
-              return response.data
-            }
-          } catch {}
-        }
+        try {
+          const response = await axios.get(url, { timeout: 10000 })
+          if (response.data && response.data.data) {
+            return response.data
+          }
+        } catch {}
+        
         throw new Error('股票代码不存在或数据获取失败')
       }
 
       const realTimeData = await fetchRealTimeData()
       
-      const [detailData, industry, marketData] = await Promise.all([
-        Promise.race([
-          this.fetchAShareDetail(code, marketPrefix),
-          new Promise((resolve) => setTimeout(() => resolve(null), 5000))
-        ]).catch(() => null),
-        Promise.race([
-          this.fetchAShareIndustry(code),
-          new Promise((resolve) => setTimeout(() => resolve(''), 3000))
-        ]).catch(() => ''),
-        Promise.race([
-          this.fetchAShareMarketData(code),
-          new Promise((resolve) => setTimeout(() => resolve(null), 3000))
-        ]).catch(() => null)
-      ])
-      
-      return this.parseAShareData(realTimeData, code, detailData, industry, marketData)
+      return this.parseEastmoneyData(realTimeData, code)
     },
 
     async fetchAShareIndustry(code) {
@@ -769,6 +726,65 @@ export default {
       } catch {
         return null
       }
+    },
+
+    // 解析东方财富API数据
+    parseEastmoneyData(response, code) {
+      const d = response.data
+      if (!d) throw new Error('数据为空')
+      
+      const currentPrice = d.f43 / 100 || 0
+      const prevClose = d.f60 / 100 || 0
+      const openPrice = d.f46 / 100 || 0
+      const highPrice = d.f44 / 100 || 0
+      const lowPrice = d.f45 / 100 || 0
+      const volume = d.f47 || 0
+      const amount = d.f48 || 0
+      const change = d.f169 / 100 || 0
+      const changePercent = d.f170 / 100 || 0
+      const turnoverRate = d.f168 / 100 || 0
+      const amplitude = prevClose > 0 ? (((highPrice - lowPrice) / prevClose) * 100).toFixed(2) : '0.00'
+      const totalMarketValue = d.f116 || 0
+      const tradableMarketValue = d.f117 || 0
+      const dynamicPE = d.f162 / 100 || 0
+      const staticPE = d.f163 / 100 || 0
+      const peTTM = d.f164 / 100 || 0
+      const PB = d.f167 / 100 || 0
+      
+      return [{
+        '股票代码': code,
+        '股票名称': d.f58 || code,
+        '行业': '',
+        '日期': new Date().toLocaleDateString(),
+        '当前价格': currentPrice ? currentPrice.toFixed(2) : '',
+        '昨收': prevClose ? prevClose.toFixed(2) : '',
+        '涨跌额': change ? change.toFixed(2) : '',
+        '涨跌幅': changePercent ? changePercent.toFixed(2) + '%' : '',
+        '涨停': (prevClose * 1.1).toFixed(2),
+        '跌停': (prevClose * 0.9).toFixed(2),
+        '今日开盘价': openPrice ? openPrice.toFixed(2) : '',
+        '今日最高价': highPrice ? highPrice.toFixed(2) : '',
+        '今日最低价': lowPrice ? lowPrice.toFixed(2) : '',
+        '均价': currentPrice ? currentPrice.toFixed(2) : '',
+        '振幅': amplitude + '%',
+        '成交量(手)': volume > 0 ? this.formatNumber(volume / 100, true) : '',
+        '金额': amount > 0 ? this.formatNumber(amount) : '',
+        '总手': volume > 0 ? this.formatNumber(volume / 100, true) : '',
+        '换手率': turnoverRate > 0 ? turnoverRate.toFixed(2) + '%' : '',
+        '总股本': '',
+        '流通股本': '',
+        '总市值': totalMarketValue > 0 ? this.formatNumber(totalMarketValue) : '',
+        '流通市值': tradableMarketValue > 0 ? this.formatNumber(tradableMarketValue) : '',
+        '动态市盈率': dynamicPE > 0 ? dynamicPE.toFixed(2) : '',
+        '静态市盈率': staticPE > 0 ? staticPE.toFixed(2) : '',
+        '市盈率(TTM)': peTTM > 0 ? peTTM.toFixed(2) : '',
+        '市净率': PB > 0 ? PB.toFixed(2) : '',
+        '时间': new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+        '_change': change,
+        '_changePercent': changePercent,
+        '_prevClose': prevClose,
+        '_close': currentPrice
+      }]
     },
 
     parseAShareData(data, code, detailData = null, industryFromAPI = '', marketData = null) {
